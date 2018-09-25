@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+	<title>PolarViz-V3</title>
+
+	<link rel="stylesheet" type="text/css" href="./libs/bootstrap.min.css">
+
+	<link rel="stylesheet" type="text/css" href="./libs/theme-RR-v.0.1.0.css">
+	<!--	 -->
+
+<style type="text/css">
+
+	#content {
+		margin-top: 35px;
+		height: 90vh;
+		border-bottom: 1px solid #eee;
+	}
+	#content .col-xs-8 {
+		height: 85vh;
+		overflow: auto;
+	}
+	#content .col-xs-4 {
+		border-right: 1px solid #eee;
+	}
+	
+	#data-table {
+		font-family: 'Helvetica Neue';
+		font-size: 18px;
+		overflow: auto;
+		height: 85vh;
+	}
+	
+	.table-header {
+		background-color: #ccc;
+	}
+	
+	.DA-node.active{
+		stroke:#F00;
+		stroke-width: 3;
+	}
+	
+	form {
+		display: block;
+		background: transparent;
+	}	
+	
+	input {
+		border: 1px dotted #ccc; 
+		background: white; 
+		font-family: monospace; 
+		padding: 10px 20px; 
+		font-size: 18px; 
+		margin: 20px 10px 20px 0; 
+		color: #ccc;
+	}
+    input:focus { 
+		background-color:yellow; 
+		outline: none;
+	}	
+</style>
+
+</head>
+
+<body>
+
+	<script src='./libs/crossfilter.min.js' defer></script>
+	<script src='./libs/bootstrap.min.js' defer></script>
+    <script src="./libs/jquery-2.1.4.min.js"></script>
+	<script src='./libs/d3.min.js' defer></script>
+	<script src='https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.23.1/babel.min.js' defer></script>
+	
+	<script src='./src/PolarViz.js' defer></script>	
+	<!--<script src='./src/PolarViz - Copy.js' defer></script>-->	
+	<script src='index.js' defer></script>	
+	
+    <div class="container-fluid">
+    	
+    	<div class="col-xs-12" id="content">
+
+    		<div class="col-xs-4">
+				<div class="table-title" style="font-size: 24px; font-family: 'Muli', 'Helvetica', Arial, sans-serif; font-weight: bold; color: #000000;">Data Table
+				</div>
+                <div id="data-table">
+				</div>
+    		</div>
+			
+    		<div class="col-xs-8">
+                <div id="radviz">
+					<div class="radviz-title" style="font-size: 24px; font-family: 'Muli', 'Helvetica', Arial, sans-serif; font-weight: bold; color: #000000;">RadViz
+					<button id="resetRadViz" onclick="resetRadViz()">Reset RadViz</button>
+					</div>	
+				</div>           
+    			<br>
+    			<div id="histogram" style="height: 250px">
+					<div class="histogram-title" style="font-size: 24px; font-family: 'Muli', 'Helvetica', Arial, sans-serif; font-weight: bold; color: #000000;">Histogram
+					<button id="resetPolarViz" onclick="resetPolarViz()">Reset PolarViz</button>
+						<div>
+							<button id="SetBinNum" onclick="SetBinNum()">Set Bin#:</button>
+							<input type="number" id="BinInput" value="50">
+						</div>					
+					</div>
+				</div>
+    		</div>
+    	</div>
+    </div>
+</body>
