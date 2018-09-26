@@ -13,7 +13,7 @@ d3.csv('./data/iris.data.csv', function(error, data) {
 	//console.log('index.js:dimensionAnchor', dimensionAnchor);
 	
 	// call the plot function
-	var plot = PolarViz()
+	PolarViz()
 		.TableTitle(titles)
 		.ColorAccessor(colorAccessor)
 		.Dimensionality(dimensions)
