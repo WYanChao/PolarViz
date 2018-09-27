@@ -1,7 +1,7 @@
 //fixed table headers
-document.getElementById("data-table").addEventListener("scroll",function(){
-   var translate = "translate(0,"+this.scrollTop+"px)";
-   this.querySelector("thead").style.transform = translate;
+document.getElementById('data-table').addEventListener('scroll',function(){
+   var translate = 'translate(0,'+this.scrollTop+'px)';
+   this.querySelector('thead').style.transform = translate;
 });
 
 function PolarViz(){
@@ -9,7 +9,10 @@ function PolarViz(){
 	/////////////////////////////////////////////////////////
 	/////////////////////////////////////////////////////////
 	// define var
-	let TableTitle, 
+	let DOMTable,
+		DOMRadViz,
+		DOMHistogram,
+		TableTitle, 
 		ColorAccessor, 
 		Dimensionality, 
 		DAnchor, 
@@ -27,39 +30,45 @@ function PolarViz(){
 		let nodecolor = d3.scaleOrdinal(d3.schemeCategory20); //set color scheme
 		const formatnumber = d3.format(',d');
 		let binnumber = 50; // default value
-		let chartRadius;		
+		let RVmargin = {top:50, right:150, bottom:50, left:80},
+			RVwidth = 600,
+			RVheight = 450;		
+		let chartRadius = Math.min((RVheight-RVmargin.top-RVmargin.bottom) , (RVwidth-RVmargin.left-RVmargin.right))/2;		
+		let Histmargin = {top:20, right:20, bottom:30, left:30},
+			Histwidth = 600,
+			Histheight =300;
+		const brush = d3.brushX(); // define a brush
+		let x = d3.scaleLinear().range([0, (Histwidth-Histmargin.left-Histmargin.right)]),
+			x_t = d3.scaleLinear().domain([0,1]).range([0, (Histwidth-Histmargin.left-Histmargin.right)]),
+			y = d3.scaleLinear().rangeRound([Histheight-Histmargin.top-Histmargin.bottom, 0]);
+			xdelta = 1/binnumber;
 		
 		/////////////////////////////////////////////////////////	
 		// Data pre-processing
-		var titles = TableTitle; // get the attributes name
+		var titles = TableTitle.slice(); // get the attributes name
 		titles.unshift('index');
 		// rewrite the data
-		var dataE = DATA.slice();//dataE, include more attributes.
-		dataE.forEach((d,i) => {
-			d.index = i;
-			d.theta = 0;
-			d.dist = 0;
-			d.distH = 0;
-			d.id = i;
-			d.color = nodecolor(ColorAccessor(d));
-		});
-		//set which dimensions will be used for RadViz
-		let dimensions = Dimensionality,
+		let dimensions = Dimensionality.slice(),
 			normalizeSuffix = '_normalized',
 			dimensionNamesNormalized = dimensions.map(function(d) { return d + normalizeSuffix; }), // 'sepalL_normalized'
 			DN = dimensions.length,
-			DA = DAnchor; // intial ;
+			DA = DAnchor.slice(), // intial ;
+			dataE = DATA.slice();//dataE, include more attributes.
+		//dataE, include more attributes.
+		dataE.forEach((d,i) => {
+			d.index = i;
+			d.id = i;
+			d.color = nodecolor(ColorAccessor(d));
+		});	
 		dataE = addNormalizedValues(dataE);
-		calculateDataSum(dataE); // calculateDataSum. only calculate once
-		calculateNodePosition(); // calculateNodePosition. need update when DAs move.	
+		dataE = calculateNodePosition(dataE, dimensionNamesNormalized, DA); // calculateNodePosition. need update when DAs move.	
+		
 		// prepare the DA data 
 		let DAdata = dimensions.map(function(d, i) {
-			let x = Math.cos(DA[i]) * 1;
-			let y = Math.sin(DA[i]) * 1;
 			return {
 				theta: DA[i], //[0, 2*PI]
-				x: x,
-				y: y,
+				x: Math.cos(DA[i])*chartRadius+chartRadius,
+				y: Math.sin(DA[i])*chartRadius+chartRadius,
 				fixed: true,
 				name: d
 				};
@@ -72,20 +81,60 @@ function PolarViz(){
 				colorclass.push(d.class); }
 		});	
 		// prepare the histdata
-		let keys = colorclass.slice();
-		keys.unshift('index');
-		//histdata
 		let Histdata = [];
-		Histdata = initializeHistData(dataE, colorclass, keys, binnumber);	
+		Histdata = initializeHistData(dataE, binnumber);	
 		
-		/////////////////////////////////////////////////////////		
+		/////////////////////////////////////////////////////////
+		// define the DOM components
+		const table = d3.select(DOMTable).append('table').attr('class','table table-hover');
+		
+		const radviz = d3.select(DOMRadViz);
+		let RVsvg = radviz.append('svg').attr('id', 'radviz')
+			.attr('width', RVwidth)
+			.attr('height', RVheight);						
+		RVsvg.append('rect').attr('fill', 'transparent')
+			.attr('width', RVwidth)
+			.attr('height', RVheight);
+		// transform a distance.(can treat as margin)
+		let center = RVsvg.append('g').attr('class', 'center').attr('transform', `translate(${RVmargin.left},${RVmargin.top})`); 	
+		// prepare the DA tips components
+		RVsvg.append('rect').attr('class', 'DAtip-rect');			
+		let DAtipContainer = RVsvg.append('g').attr('x', 0).attr('y', 0);
+		let DAtip = DAtipContainer.append('g')
+			.attr('class', 'DAtip')
+			.attr('transform', `translate(${RVmargin.left},${RVmargin.top})`)
+			.attr('display', 'none');
+		DAtip.append('rect');
+		DAtip.append('text').attr('width', 150).attr('height', 25)
+			.attr('x', 0).attr('y', 25)
+			.text(':').attr('text-anchor', 'start').attr('dominat-baseline', 'middle');	
+		// prepare DT tooltip components
+		RVsvg.append('rect').attr('class', 'tip-rect')
+			.attr('width', 80).attr('height', 200)
+			.attr('fill', 'transparent')
+			.attr('backgroundColor', d3.rgb(100,100,100)); // add tooltip container				
+		let tooltipContainer = RVsvg.append('g')
+			.attr('class', 'tip')
+			.attr('transform', `translate(${RVmargin.left},${RVmargin.top})`)
+			.attr('display', 'none');
+
+		const histogram =d3.select(DOMHistogram);
+		let Histsvg = histogram.append('svg').attr('id', 'histogram')
+			.attr('width', Histwidth).attr('height', Histheight)
+			.append('g').attr('transform', 'translate(' + Histmargin.left + ',' + Histmargin.top + ')');
+		let Xaxis = Histsvg.append('g').attr('class', 'axis')
+			.attr('transform', 'translate(0,' + (Histheight-Histmargin.top-Histmargin.bottom) + ')'),
+			Yaxis = Histsvg.append('g').attr('class', 'axis'),
+			stackbar = Histsvg.append('g').attr('class', 'bar'),
+			gbrush = Histsvg.append('g').attr('class', 'brush');
+		
 		/////////////////////////////////////////////////////////
 		//Render the list.
-		const PVTable 		= d3.select('#data-table').data([pvtable]);
+		const PVTable 		= d3.select(DOMTable).data([pvtable]);
 		//Render the radviz
-		const PVRadviz		= d3.select('#radviz').data([pvradviz()]);
+		const PVRadviz		= d3.select(DOMRadViz).data([pvradviz()]);
 		//Render the histogram
-		const PVHistogram 	= d3.select('#histogram').data([pvhistogram()]);
+		const PVHistogram 	= d3.select(DOMHistogram).data([pvhistogram()]);
 		
 		/////////////////////////////////////////////////////////
 		// Rendering
@@ -104,28 +153,21 @@ function PolarViz(){
 		// add event listeners
 		document.getElementById('resetRadViz').onclick = function() {resetRadViz()};	
 		// reset RadViz
-		function resetRadViz() {
-			//remove all svg plot
-			d3.select('svg#radviz').remove();
-			d3.select('svg#histogram').remove();
-			
+		function resetRadViz() {			
 			// re-intialized all data and then calculate
-			DA = [];
-			DA = Array.apply(null, {length: DN}).map(Number.call, Number).map(x=>x*2*Math.PI/DN); // intial ;
+			DA = DAnchor.slice();
 			DAdata = dimensions.map(function(d, i) {
-				let x = Math.cos(DA[i]) * 1;
-				let y = Math.sin(DA[i]) * 1;
 				return {
 					theta: DA[i], //[0, 2*PI]
-					x: x,
-					y: y,
+					x: Math.cos(DA[i])*chartRadius+chartRadius,
+					y: Math.sin(DA[i])*chartRadius+chartRadius,
 					fixed: true,
 					name: d
 					};
 			});	//DAdata is based on DA.
-			calculateNodePosition();
-			Histdata = [];
-			Histdata = initializeHistData(dataE, colorclass, keys, binnumber);			
+			calculateNodePosition(dataE, dimensionNamesNormalized, DA);	
+			//Histdata = [];
+			Histdata = initializeHistData(dataE, binnumber);			
 			//re-rendering
 			renderAll();
 		} /* 	*/	
@@ -134,23 +176,17 @@ function PolarViz(){
 		document.getElementById('resetPolarViz').onclick = function() {resetPolarViz()};
 		// reset PolarViz
 		function resetPolarViz() {
-			//remove all svg plot
-			d3.select('svg#radviz').remove();
-			d3.select('svg#histogram').remove();
 			DAdata = dimensions.map(function(d, i) {
-				let x = Math.cos(DA[i]) * 1;
-				let y = Math.sin(DA[i]) * 1;
 				return {
 					theta: DA[i], //[0, 2*PI]
-					x: x,
-					y: y,
+					x: Math.cos(DA[i])*chartRadius+chartRadius,
+					y: Math.sin(DA[i])*chartRadius+chartRadius,
 					fixed: true,
 					name: d
 					};
 			});		
-			calculateNodePosition();
-			Histdata = [];
-			Histdata = initializeHistData(dataE, colorclass, keys, binnumber);			
+			calculateNodePosition(dataE, dimensionNamesNormalized, DA);	
+			Histdata = initializeHistData(dataE, binnumber);			
 			//re-rendering
 			renderAll();		
 		}	
@@ -169,57 +205,25 @@ function PolarViz(){
 				console.log('BInput is not suitable. Use floor of this value.', Math.floor(+tempa));
 				tempa = Math.floor(+tempa);			
 			}
-			//remove histogram plot
-			d3.select('svg#histogram').remove();
-			
+			//renew the binnumber
+			binnumber = tempa;
 			//clear data
-			Histdata = [];
-			Histdata = initializeHistData(dataE, colorclass, keys, tempa);
+			Histdata = initializeHistData(dataE, tempa);
 			PVHistogram.each(render);
 		}
 
 		/////////////////////////////////////////////////////////
 		// Function for display radviz
-		function pvradviz(){
-			let margin = {top:50, right:150, bottom:50, left:80},
-				width = 600,
-				height = 450;
-		
+		function pvradviz(){		
 			function chart(div) {
 				div.each(function() {
-					let div = d3.select(this);
-					
-					let svg = div.append('svg')
-							.attr('id', 'radviz')
-							.attr('width', width)
-							.attr('height', height);						
-					svg.append('rect')
-						.attr('fill', 'transparent')
-						.attr('width', width/*-margin.left-margin.right*/)
-						.attr('height', height/*-margin.top-margin.bottom*/);//classed('bg', true).
-					// transform a distance.(can treat as margin)
-					let center = svg.append('g').attr('class', 'center').attr('transform', `translate(${margin.left},${margin.top})`); 
-					chartRadius = Math.min((height-margin.top-margin.bottom) , (width-margin.left-margin.right))/2;
-					calculateDAdata(chartRadius);
-					
 					/* --------------- section --------------- */
 					/*Draw the big circle: drawPanel(chartRadius)*/
-					// The default setting: 'stroke="black" stroke-width="3"'
+					// The default setting: 'stroke='black' stroke-width='3''
 					drawPanel(chartRadius);
 					
 					/* --------------- section --------------- */
 					/*Draw the Dimensional Anchor nodes: tips components, and then call drawDA() to draw DA points, and call drawDALabel to draw DA labels*/
-					// prepare the DA tips components
-					svg.append('rect').attr('class', 'DAtip-rect');			
-					let DAtipContainer = svg.append('g').attr('x', 0).attr('y', 0);
-					let DAtip = DAtipContainer.append('g')
-								.attr('class', 'DAtip')
-								.attr('transform', `translate(${margin.left},${margin.top})`)
-								.attr('display', 'none');
-					DAtip.append('rect');
-					DAtip.append('text').attr('width', 150).attr('height', 25)
-							.attr('x', 0).attr('y', 25)
-							.text(':').attr('text-anchor', 'start').attr('dominat-baseline', 'middle');
 					// draw the DA nodes
 					drawDA();
 					// the DA nodes label
@@ -227,14 +231,6 @@ function PolarViz(){
 					
 					/* --------------- section --------------- */
 					/*Draw the data Point nodes: prepare visual components and then call drawDT()*/
-					// prepare DT tooltip components
-					svg.append('rect').attr('class', 'tip-rect').attr("width", 80).attr("height", 200)
-							.attr('fill', 'transparent')
-							.attr('backgroundColor', d3.rgb(100,100,100)); // add tooltip container				
-					let tooltipContainer = svg.append('g')
-								.attr('class', 'tip')
-								.attr('transform', `translate(${margin.left},${margin.top})`)
-								.attr('display', 'none');
 					// add multiple lines for each information			
 					let tooltip = tooltipContainer.selectAll('text').data(titles)
 							.enter().append('g').attr('x', 0).attr('y',function(d,i){return 25*i;});
@@ -248,7 +244,7 @@ function PolarViz(){
 					drawDT();
 						
 					/* --------------- section --------------- */
-					/*Draw the legend: prepare data and then call drawLegend()*/				
+					/*Draw the legend: prepare data and then call drawLegend()*/		
 					// plot the legend
 					drawLegend();
 
@@ -280,25 +276,23 @@ function PolarViz(){
 							.attr('cy', d => d.y)
 							.on('mouseenter', function(d){
 								let damouse = d3.mouse(this); // get current mouse position
-								svg.select('g.DAtip').select('text').text('(' + formatnumber((d.theta/Math.PI)*180) + ')').attr('fill', 'darkorange').attr('font-size', '18pt');
-								svg.select('g.DAtip').attr('transform',  `translate(${margin.left + damouse[0] +0},${margin.top+damouse[1] - 50})`);
-								svg.select('g.DAtip').attr('display', 'block');
+								RVsvg.select('g.DAtip').select('text').text('(' + formatnumber((d.theta/Math.PI)*180) + ')').attr('fill', 'darkorange').attr('font-size', '18pt');
+								RVsvg.select('g.DAtip').attr('transform',  `translate(${RVmargin.left + damouse[0] +0},${RVmargin.top+damouse[1] - 50})`);
+								RVsvg.select('g.DAtip').attr('display', 'block');
 							})
 							.on('mouseout', function(d){
-								svg.select('g.DAtip').attr('display', 'none');
+								RVsvg.select('g.DAtip').attr('display', 'none');
 							})
 							.call(d3.drag()
-								.on("start", dragstarted)
-								.on("drag", dragged)
-								.on("end", dragended)
+								.on('start', dragstarted)
+								.on('drag', dragged)
+								.on('end', dragended)
 							);
 					}//end of function drawDA				
 
 					// dragstarted, dragged, dragended
 					function dragstarted(d){ 
-						//div.select('.radviz-title a').attr('display', 'block');
 						d3.select(this).raise().classed('active', true);
-						//d3.select(this).attr('stroke', 'red').attr('stroke-width', 3);
 					}
 					function dragended(d){ 
 						d3.select(this).classed('active', false);
@@ -306,17 +300,13 @@ function PolarViz(){
 					}
 					function dragged(d, i) {
 						d3.select(this).raise().classed('active', true);
-						//d3.select(this).attr('stroke', 'red').attr('stroke-width', 3);
 						let tempx = d3.event.x - chartRadius;
 						let tempy = d3.event.y - chartRadius;
 						let newAngle = Math.atan2( tempy , tempx ) ;	
-						if(newAngle<0){
-							newAngle = 2*Math.PI + newAngle;
-						}
+						newAngle = newAngle<0? 2*Math.PI + newAngle : newAngle;
 						d.theta = newAngle;
 						d.x = chartRadius + Math.cos(newAngle) * chartRadius;
-						d.y = chartRadius + Math.sin(newAngle) * chartRadius;					
-						//d3.select(this).attr("cx", d.x = d3.event.x).attr("cy", d.y = d3.event.y);
+						d.y = chartRadius + Math.sin(newAngle) * chartRadius;
 						d3.select(this).attr('cx', d.x).attr('cy', d.y);
 						// redraw the dimensional anchor and the label
 						drawDA();
@@ -324,12 +314,11 @@ function PolarViz(){
 						
 						//update data points
 						DA[i] = newAngle;
-						calculateNodePosition();
+						calculateNodePosition(dataE, dimensionNamesNormalized, DA);
 						drawDT();
 						
 						//update histogram data and plot histogram
-						Histdata = initializeHistData(dataE, colorclass, keys, binnumber);
-						d3.select('svg#histogram').remove();
+						Histdata = initializeHistData(dataE, binnumber);
 						PVHistogram.each(render);
 					}
 					
@@ -339,21 +328,12 @@ function PolarViz(){
 						let DANodesLabel = center.selectAll('text.DA-label')
 							.data(DAdata).enter().append('text').attr('class', 'DA-label')
 							.attr('x', d => d.x).attr('y', d => d.y)
-							.attr('text-anchor', function(d) {
-								if (Math.cos(d.theta) > 0) { return 'start';	}
-								else { return 'end'; }
-							})
-							.attr('dominat-baseline', function(d) {
-								if (Math.sin(d.theta) < 0) { return 'baseline';}
-								else { return 'hanging'; }
-							})
+							.attr('text-anchor', d=>Math.cos(d.theta)>0?'start':'end')
+							.attr('dominat-baseline', d=>Math.sin(d.theta)<0?'baseline':'hanging')
 							.attr('dx', d => Math.cos(d.theta) * 15)
-							.attr('dy', function (d) {
-								if (Math.sin(d.theta) < 0) { return Math.sin(d.theta) * (15) ; }
-								else { return Math.sin(d.theta) * (15)+ 10 ; }
-							})
+							.attr('dy', d=>Math.sin(d.theta)<0?Math.sin(d.theta)*(15):Math.sin(d.theta)*(15)+ 10)
 							.text(d => d.name)
-							.attr('font-size', '18pt');					
+							.attr('font-size', '18pt');				
 					}//end of function drawDALabel
 
 					// subfunction --> drawDT(): draw the data points.
@@ -363,41 +343,34 @@ function PolarViz(){
 							.data(dataE).enter().append('circle').attr('class', 'circle-data')
 							.attr('id', d=>d.index)
 							.attr('r', radiusDT)
-							.attr('fill', function(d){ 
-								return d.color;
-							})
+							.attr('fill', d=>d.color)
 							.attr('stroke', 'black')
 							.attr('stroke-width', 0.5)
 							.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius)
 							.on('mouseenter', function(d) {
 								let mouse = d3.mouse(this); //get current mouse position.
-								let tip = svg.select('g.tip').selectAll('text').text(function(k, i){
+								let tip = RVsvg.select('g.tip').selectAll('text').text(function(k, i){
 									return k + ': ' + d[k];
 								}); // edit tips text
 								// move tips position
-								svg.select('g.tip').attr('transform',  `translate(${margin.left + mouse[0] +20},${margin.top+mouse[1] - 120})`);
+								RVsvg.select('g.tip').attr('transform',  `translate(${RVmargin.left + mouse[0] +20},${RVmargin.top+mouse[1] - 120})`);
 								// display the tip
-								svg.select('g.tip').attr('display', 'block');
+								RVsvg.select('g.tip').attr('display', 'block');
 								// highlight the point
-								d3.select(this).transition().attr('r', radiusDT*2)
-									.attr('stroke-width', 3);	
-								d3.select(this).moveToFront();	
+								d3.select(this).raise().transition().attr('r', radiusDT*2).attr('stroke-width', 3);	
 							})
 							.on('mouseout', function(d) {
 								// close the tips.
-								svg.select('g.tip').attr('display', 'none');
+								RVsvg.select('g.tip').attr('display', 'none');
 								// dis-highlight the point
 								d3.select(this).transition().attr('r', radiusDT).attr('stroke-width', 0.5);
-								d3.select(this).moveToBack();
-								// so that big circle svg will not cover the data nodes.
-								d3.select('circle.big-circle').moveToBack(); 
 							});					
 					}// end of function drawDT				
 					
 					// subfunction --> drawLegend()
 					function drawLegend() {
-						let heightLegend = 25, xLegend = margin.left+chartRadius*1.7, yLegend = 25;
+						let heightLegend = 25, xLegend = RVmargin.left+chartRadius*1.7, yLegend = 25;
 						let legendcircle = center.selectAll('circle.legend').data(colorspace)
 							.enter().append('circle').attr('class', 'legend')
 							.attr('r', radiusDT)
@@ -411,7 +384,7 @@ function PolarViz(){
 							.text(d => d).attr('font-size', '16pt').attr('dominat-baseline', 'middle')
 							.on('mouseover', function(d){
 								//when mouse hover, other classes will be discolored.
-								let tempa = d3.select('#radviz').selectAll('.circle-data');
+								let tempa = d3.select(DOMRadViz).selectAll('.circle-data');
 								tempa.nodes().forEach((element) => {
 									let tempb = element.getAttribute('id');
 									if (dataE[tempb].class != d) {
@@ -421,66 +394,23 @@ function PolarViz(){
 							})
 							.on('mouseout', function(d) {
 								//when mouse move out, display normally.
-								d3.select('#radviz').selectAll('.circle-data')
+								d3.select(DOMRadViz).selectAll('.circle-data')
 									.attr('fill-opacity', 1).attr('stroke-width', 0.5);
 							});					
 					}// end of function drawLegend()
 					
 				});// end of div.each(function(){})
 			} // end of function chart(div)
-			
-			// input information?
-			chart.margin = function(_) {
-				if (!arguments.length) return margin;
-				margin = _;
-				return chart;
-			};
-			
-			chart.width = function(_) {
-				if (!arguments.length) return width;
-				width = _;
-				return chart;
-			};
-
-			chart.height = function(_) {
-				if (!arguments.length) return height;
-				height = _;
-				return chart;
-			};	
-
-			chart.radiusDA = function(_) {
-				if (!arguments.length) return radiusDA;
-				radiusDA = _;
-				return chart;
-			};	
-
-			chart.radiusDT = function(_) {
-				if (!arguments.length) return radiusDT;
-				radiusDT = _;
-				return chart;
-			};	
-			
 			return chart;
 		}
 		
 		// Function for display histogram
-		function pvhistogram(){
-			let margin = {top:20, right:20, bottom:30, left:30},
-				width = 600,
-				height = 300;
-			const brush = d3.brushX(); //define a brush
-			//let brushRange;
-			let x = d3.scaleLinear().range([0, (width-margin.left-margin.right)]),
-				x_t = d3.scaleLinear().domain([0, 1]).range([0, (width-margin.left-margin.right)]),
-				xdelta = 1/binnumber;
-			let	y = d3.scaleLinear().rangeRound([height-margin.top-margin.bottom, 0]);	
-		
+		function pvhistogram(){		
 			function histogram(div) {
-				div.each(function() {
-					let div = d3.select(this);
-					let svg = div.append('svg').attr('id', 'histogram')
-							.attr('width', width).attr('height', height)
-							.append('g').attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+				div.each(function() {	
+					console.log('Histdata', Histdata);
+					x.domain([0, d3.max(Histdata, function(d) { return d.index; })+1]);
+					y.domain([0, d3.max(Histdata, function(d) { return d.total; })]).nice();
 					// draw Axis X and Y
 					drawHistAxis();
 					// draw Bars
@@ -492,41 +422,33 @@ function PolarViz(){
 					/*subfunctions of histogram()*/
 					//subfunction: drawHistAxis
 					function drawHistAxis(){
-						//x.domain(Histdata.map(function(d) { return d.index; }));
-						x.domain([0, d3.max(Histdata, function(d) { return d.index; })+1]);
-						y.domain([0, d3.max(Histdata, function(d) { return d.total; })]).nice();
-						
 						// x-axis
-						svg.append('g').attr('class', 'axis')
-							.attr('transform', 'translate(0,' + (height-margin.top-margin.bottom) + ')')
-							.call(d3.axisBottom(x).ticks(11, "s")); 
+						Xaxis.call(d3.axisBottom(x).ticks(11, 's')); 
 						// y-axis
-						svg.append('g').attr('class', 'axis')
-							.call(d3.axisLeft(y).ticks(null, "s"));					
+						Yaxis.call(d3.axisLeft(y).ticks(null, 's'));					
 					}
 					//subfunction: drawHistBar
 					function drawHistBar() {
+						stackbar.selectAll('g#colorgroup').remove();
 						// stacked bar chart
-						const stackbar = svg.append('g').attr('class', 'bar').selectAll('g')
-							.data(d3.stack().keys(colorclass)(Histdata));
-						stackbar.enter().append('g')
-							.attr('fill', function(d) { return nodecolor(d.key); })
+						let tempa = stackbar.selectAll('g#colorgroup').data(d3.stack().keys(colorclass)(Histdata)).enter()
+							.append('g').attr('id', 'colorgroup')
+							.attr('fill', d=>nodecolor(d.key))
 							.attr('class', d=>d.key)
-							.selectAll('rect')
-							.data(function(d) { return d; })
+							.selectAll('rect').data(function(d) { return d; })
 							.enter().append('rect')
 							.attr('class', 'bar')
-							.attr('x', function(d) { return x(d.data.index); })
-							.attr('y', function(d) { return y(d[1]); })
-							.attr('height', function(d) { return y(d[0]) - y(d[1]); })
-							.attr('width', function(d) { return (x(d.data.index+1) - x(d.data.index))*0.9; });						
+							.attr('x', function(d) {return x(d.data.index);})
+							.attr('y', function(d) {return y(d[1]);})
+							.attr('height', function(d){return y(d[0])-y(d[1]);})
+							.attr('width', d=> (x(d.data.index+1) - x(d.data.index))*0.9);
+						//tempa.merge(tempa);						
 					}
 					//subfunction: drawHistBrush
 					function drawHistBrush() {
 						// plot brush
-						brush.extent([[0, 0], [width-margin.right-margin.left, height-margin.top-margin.bottom]]);
-						const gbrush = svg.append('g').attr('class', 'brush')
-							.call(brush);					
+						brush.extent([[0, 0], [Histwidth-Histmargin.right-Histmargin.left, Histheight-Histmargin.top-Histmargin.bottom]]);
+						gbrush.call(brush);					
 					}
 					
 				});// end of div.each(function(){})
@@ -545,25 +467,25 @@ function PolarViz(){
 					d3.select(this).call(brush.move, brushRange);//,extents
 				}
 				// Fade all bars in the histogram not within the brush
-				let tempa = d3.select(this.parentNode.parentNode).selectAll('rect.bar');
+				let tempa = d3.select(DOMHistogram).selectAll('rect.bar');
 				tempa.nodes().forEach((k)=>{
 					if (k.getAttribute('x') >= brushRange[0] && k.getAttribute('x') < brushRange[1] || (d3.event.selection === null)) {	d3.select(k).attr('opacity', '1');}
 					else { d3.select(k).attr('opacity', '0.2'); }
 				});
 				// Fade all DTNodes in the RadViz not within the brush
-				let tempb = d3.select('svg#radviz').selectAll('circle.circle-data');
+				let tempb = d3.select(DOMRadViz).selectAll('circle.circle-data');
 				tempb.nodes().forEach((m)=>{
 					let tempc = m.getAttribute('id'); //index
 					if (x(dataE[tempc].histindex) >= brushRange[0] && x(dataE[tempc].histindex) < brushRange[1] || (d3.event.selection === null)) {	d3.select(m).attr('opacity', '1').attr('stroke-width', 1);}
-					else { d3.select(m).attr('opacity', '0.2').attr('stroke-width', 0);; }
+					else { d3.select(m).attr('opacity', '0.2').attr('stroke-width', 0);}
 				});
 				
 			});//end of brush.on('brush.hist')
 			brush.on('end.hist', function(){
 				// Only transition after input. or Ignore empty selections.
 				if (!d3.event.selection || !d3.event.sourceEvent) {
-					let tempa = d3.select(this.parentNode.parentNode).selectAll('rect.bar');
-					let tempb = d3.select('svg#radviz').selectAll('circle.circle-data');
+					let tempa = d3.select(DOMHistogram).selectAll('rect.bar');
+					let tempb = d3.select(DOMRadViz).selectAll('circle.circle-data');
 					tempa.attr('opacity', '1');
 					tempb.attr('opacity', '1').attr('stroke-width', 0.5);
 				}
@@ -574,7 +496,7 @@ function PolarViz(){
 				//four parts: get x0&x1; keyboard; update data; redraw
 				if (d3.event.key !== 'e' && d3.event.key !== 'E' && d3.event.key !== 'q' && d3.event.key !== 'Q' && d3.event.key !== 'w' && d3.event.key !== 'W' && d3.event.key !== 'a' && d3.event.key !== 'A' && d3.event.key !== 's' && d3.event.key !== 'S' && d3.event.key !== 'z' && d3.event.key !== 'Z' && d3.event.key !== 'x' && d3.event.key !== 'X') return;
 				//get x0&x1
-				const tempa = d3.select('svg#histogram').select('.brush');
+				const tempa = d3.select(DOMHistogram).select('.brush');
 				let brushRangeA = d3.event.selection || d3.brushSelection(tempa.node()),
 					brushRangeB;
 				let xleft 	= x_t.invert(brushRangeA[0]),
@@ -616,21 +538,16 @@ function PolarViz(){
 								d.y0 = Math.sin(d.theta*Math.PI/180) * d.distH;				
 							}
 						});
-						
+						brushRangeB = brushRangeA;	
 						//redraw
-						brushRangeB = brushRangeA;
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		
-						Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);					
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);		
 					}
-					
 				}//end of case e
 				else if (d3.event.key == 'q' || d3.event.key == 'Q') {
 					let xmin = 0;
@@ -647,15 +564,13 @@ function PolarViz(){
 							}
 						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;	
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}				
 				}//end of case q
 				else if (d3.event.key == 'w' || d3.event.key == 'W') {
@@ -673,22 +588,19 @@ function PolarViz(){
 							}
 						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;	
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}
 				}//end of case w
 				else if (d3.event.key == 'a' || d3.event.key == 'A') {
 					if (xleft - xdelta > 0) {
 						brushRangeB = [x_t(xleft - xdelta), x_t(xright)];
 						dataE.forEach((d, i)=>{
-							//d.distH = d.dist;
 							if (d.distH < xleft) { 
 								d.distH = (d.distH * (xleft - xdelta))/xleft;	
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
@@ -699,24 +611,21 @@ function PolarViz(){
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
 								d.y0 = Math.sin(d.theta*Math.PI/180) * d.distH;
 							}
-						})
+						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}
 				}//end of case a
 				else if (d3.event.key == 's' || d3.event.key == 'S') {
 					if (xleft + xdelta < xright) {
 						brushRangeB = [x_t(xleft + xdelta), x_t(xright)];
 						dataE.forEach((d, i)=>{
-							//d.distH = d.dist;
 							if (d.distH < xleft) { 
 								d.distH = (d.distH * (xleft + xdelta))/xleft;	
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
@@ -727,24 +636,21 @@ function PolarViz(){
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
 								d.y0 = Math.sin(d.theta*Math.PI/180) * d.distH;
 							}
-						})
+						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;	
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}				
 				}//end of case s
 				else if (d3.event.key == 'z' || d3.event.key == 'Z') {
 					if (xright - xdelta > xleft) {
 						brushRangeB = [x_t(xleft), x_t(xright - xdelta)];
 						dataE.forEach((d, i)=>{
-							//d.distH = d.dist;
 							if (d.distH > xright) { 
 								d.distH = 1 + ((xright - xdelta - 1)*(d.distH - 1))/(xright - 1);	
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
@@ -755,17 +661,15 @@ function PolarViz(){
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
 								d.y0 = Math.sin(d.theta*Math.PI/180) * d.distH;
 							}
-						})
+						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}				
 				}//end of case z
 				else if (d3.event.key == 'x' || d3.event.key == 'X') {
@@ -782,71 +686,45 @@ function PolarViz(){
 								d.x0 = Math.cos(d.theta*Math.PI/180) * d.distH;
 								d.y0 = Math.sin(d.theta*Math.PI/180) * d.distH;
 							}
-						})
+						});
 						//redraw
-						let tempa = d3.select('svg#radviz').selectAll('circle.circle-data');
-						tempa.attr('cx', d => d.x0*chartRadius + chartRadius)
+						let tempc = d3.select(DOMRadViz).selectAll('circle.circle-data');
+						tempc.attr('cx', d => d.x0*chartRadius + chartRadius)
 							.attr('cy', d => d.y0*chartRadius + chartRadius);
-							
-						let tempb = document.getElementById('BinInput').value;		Histdata = [];
-						Histdata = initializeHistData(dataE, colorclass, keys, tempb);
-						d3.select('svg#histogram').remove();
+						let tempb = document.getElementById('BinInput').value;
+						Histdata = initializeHistData(dataE, tempb);
 						PVHistogram.each(render);
-						d3.select('svg#histogram').select('.brush').call(brush.move, brushRangeB);
+						d3.select(DOMHistogram).select('.brush').call(brush.move, brushRangeB);
 					}				
-				}//end of case x
+				}//end of case x						
 			})
-			
-			// input information?
-			histogram.margin = function(_) {
-				if (!arguments.length) return margin;
-				margin = _;
-				return histogram;
-			};
-			
-			histogram.width = function(_) {
-				if (!arguments.length) return width;
-				width = _;
-				return histogram;
-			};
-
-			histogram.height = function(_) {
-				if (!arguments.length) return height;
-				height = _;
-				return histogram;
-			};	
-				
 			return histogram;
 		}
 				
 		// Functions for display data table	and update click event.
 		function pvtable(div) {
 			div.each(function() {
-				const table = d3.select(this).append('table').attr('class','table table-hover');
-
 				const headers = table.append('thead').attr('class', 'table-header').append('tr').selectAll('th').data(titles);
+				headers.exit().remove();
 				headers.enter().append('th')
-					.text(function (d) { return d;})
+					.text(d=>d)
 					.merge(headers);
 				const rows = table.append('tbody').selectAll('tr').data(DATA);
+				rows.exit().remove();
 				const cells = rows.enter().append('tr')
 					.on('mouseover', function(d,i) { 
-						let tempa = d3.select('#radviz').selectAll('.circle-data');
-						tempa.nodes().forEach((element) => { //here important 'tempa.nodes()'
+						let tempa = d3.select(DOMRadViz).selectAll('.circle-data');
+						tempa.nodes().forEach((element) => { 
 							if (element.getAttribute('id') == i) {
 								d3.select(element).transition().attr('r', radiusDT*2).attr('stroke-width', 3);
-								d3.select(element).moveToFront();
 							}
 						});
 					})
 					.on('mouseout', function(d, i) {
-						let tempa = d3.select('#radviz').selectAll('.circle-data');
+						let tempa = d3.select(DOMRadViz).selectAll('.circle-data');
 						tempa.nodes().forEach((element) => {
 							if (element.getAttribute('id') == i) {
 								d3.select(element).transition().attr('r', radiusDT).attr('stroke-width', 0.5);
-								d3.select(element).moveToBack();
-								// so that big circle svg will not cover the data nodes.
-								d3.select('circle.big-circle').moveToBack(); 
 							}
 						});					
 					});
@@ -857,35 +735,31 @@ function PolarViz(){
 						return {'value': d[k], 'name': k};
 					});
 				});
+				cell.exit().remove();
 				cell.enter().append('td').text(d=>d.value)
 					.merge(cell);
 			});
-		} // end of PVTable function
-		
-		// move element to the front
-		d3.selection.prototype.moveToFront = function() {  
-		  return this.each(function(){
-			this.parentNode.appendChild(this);
-		  });
-		}
-		// move element to the back
-		d3.selection.prototype.moveToBack = function() {  
-			return this.each(function() { 
-				var firstChild = this.parentNode.firstChild; 
-				if (firstChild) { 
-					this.parentNode.insertBefore(this, firstChild); 
-				} 
-			});
-		}		
+		} // end of PVTable function		
 	
 		/////////////////////////////////////////////////////////
 		// functions for data processing
 		// Initialize the histdata
-		function initializeHistData(dataE, colorclass, keys, number){	
-			let data = [...Array.apply(null, {length: number}).map(Number.call, Number)]
-				.map(e=>Array.apply(null, {length: colorclass.length+1}).fill(0));
+		function initializeHistData(dataE, number){	
+			let colorclass=[], colorspace=[];
+			dataE.forEach(function(d,i){
+				if(colorspace.indexOf(d.color)<0) {
+					colorspace.push(d.color);
+					colorclass.push(d.class);
+				}
+			});
+			let keys = colorclass.slice();
+			keys.unshift('index');			
+			
+			let data = [...Array.apply(null, {length: number}).map(Number.call, Number)].map(e=>Array.apply(null, {length: colorclass.length+1}).fill(0));
 			data.forEach((d,i)=>{d[0]=i;}); // add index
 			let tempa = d3.scaleLinear().domain([0,1]).range([0, data.length]);
+
+			//console.log('test v2:', keys);
 			dataE.forEach((d)=>{
 				let tempb = Math.floor(tempa(d.distH))==number? number-1: Math.floor(tempa(d.distH));
 				let tempc = colorspace.indexOf(d.color);
@@ -907,20 +781,13 @@ function PolarViz(){
 			});
 			return data;
 		}//end of function initializeHistData	
-		// calculate DAdata based on the new radius
-		function calculateDAdata(radius) {
-			DAdata.forEach(function(d){
-				d.x = radius * d.x + radius;
-				d.y = radius * d.y + radius;
-			});
-			return DAdata;
-		}// end of function calculateDAdata(radius)
 		//calculate theta and r
-		function calculateNodePosition() {
+		function calculateNodePosition(dataE, dimensionNamesNormalized, DA) {
 			dataE.forEach(function(d) {
 				let dsum = d.dsum, dx = 0, dy = 0;
-				dimensionNamesNormalized.forEach(function (k, i){ dx += Math.cos(DA[i])*d[k]; }); // dx
-				dimensionNamesNormalized.forEach(function (k, i){ dy += Math.sin(DA[i])*d[k]; }); // dy
+				dimensionNamesNormalized.forEach(function (k, i){ 
+					dx += Math.cos(DA[i])*d[k]; 
+					dy += Math.sin(DA[i])*d[k]; }); // dx & dy
 				d.x0 = dx/dsum;
 				d.y0 = dy/dsum;
 				d.dist 	= Math.sqrt(Math.pow(dx/dsum, 2) + Math.pow(dy/dsum, 2)); // calculate r
@@ -929,16 +796,7 @@ function PolarViz(){
 			});
 			return dataE;
 		} // end of function calculateNodePosition()
-		//calculate dsum
-		function calculateDataSum(data) {
-			data.forEach(function(d) {
-				let dsum = 0;
-				dimensionNamesNormalized.forEach(function (k){ dsum += d[k]; }); // sum
-				d.dsum = dsum;
-			});
-			return data;
-		}// end of function calculateDataSum()
-		// original data normalization
+		// original data normalization and dsum
 		function addNormalizedValues(data) {
 			data.forEach(function(d) {
 				dimensions.forEach(function(dimension) {
@@ -956,6 +814,11 @@ function PolarViz(){
 					d[dimension + '_normalized'] = normalizationScales[dimension](d[dimension]);
 				});
 			});
+			data.forEach(function(d) {
+				let dsum = 0;
+				dimensionNamesNormalized.forEach(function (k){ dsum += d[k]; }); // sum
+				d.dsum = dsum;
+			});			
 			return data;
 		}// end of function addNormalizedValues(data)
 	}
@@ -964,28 +827,43 @@ function PolarViz(){
 	/////////////////////////////////////////////////////////
 	/////////////////////////////////////////////////////////	
 	// handle input
+	PV.DOMTable = function(_a) {
+	if (!arguments.length) {return console.log('No Table DOM')};
+		DOMTable = _a;
+		return PV;
+	};
+	PV.DOMRadViz = function(_a) {
+	if (!arguments.length) {return console.log('No RadViz DOM')};
+		DOMRadViz = _a;
+		return PV;
+	};
+	PV.DOMHistogram = function(_a) {
+	if (!arguments.length) {return console.log('No Histogram DOM')};
+		DOMHistogram = _a;
+		return PV;
+	};
 	PV.TableTitle = function(_a) {
-	if (!arguments.length) {return console.log("Input TableTitle")};
+	if (!arguments.length) {return console.log('Input TableTitle')};
 		TableTitle = _a;
 		return PV;
 	};
 	PV.ColorAccessor = function(_a) {
-		if (!arguments.length) return console.log("Input ColorAccessor");
+		if (!arguments.length) return console.log('Input ColorAccessor');
 		ColorAccessor = _a;
 		return PV;
 	};	
 	PV.Dimensionality = function(_a) {
-		if (!arguments.length) return console.log("Input Dimensionality");
+		if (!arguments.length) return console.log('Input Dimensionality');
 		Dimensionality = _a;
 		return PV;
 	};
 	PV.DAnchor = function(_a) {
-		if (!arguments.length) return console.log("Input initial DAnchor");
+		if (!arguments.length) return console.log('Input initial DAnchor');
 		DAnchor = _a;
 		return PV;
 	};	
 	PV.DATA = function(_a) {
-		if (!arguments.length) return console.log("Input DATA");
+		if (!arguments.length) return console.log('Input DATA');
 		DATA = _a;
 		return PV;
 	};	
